@@ -2,14 +2,14 @@ from setuptools import setup
 
 setup(
     name='ngxtop',
-    version='0.0.2',
+    version='0.0.1',
     description='Real-time metrics for nginx server',
     long_description=open('README.rst').read(),
     license='MIT',
 
-    url='https://github.com/lebinh/ngxtop',
-    author='Binh Le',
-    author_email='lebinh.it@gmail.com',
+    url='https://github.com/winking324/ngxtop_rtmp_hls',
+    author='Hugo Shan',
+    author_email='winking324@gmail.com',
 
     classifiers=[
         'Development Status :: 4 - Beta',
