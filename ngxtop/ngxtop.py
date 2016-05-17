@@ -8,11 +8,13 @@ Usage:
 
 Options:
     -l <file>, --access-log <file>  access log file to parse.
+    -r <url>, --rtmp-stat-url <url>  rtmp stat url to parse.
     -f <format>, --log-format <format>  log format as specify in log_format directive. [default: combined]
     --no-follow  ngxtop default behavior is to ignore current lines in log
                      and only watch for new lines as they are written to the access log.
                      Use this flag to tell ngxtop to process the current content of the access log instead.
     -t <seconds>, --interval <seconds>  report interval when running in follow mode [default: 2.0]
+    -s <samples>, --samples <samples>  Use logging mode and display samples, even if standard output is a terminal.
 
     -g <var>, --group-by <var>  group by variable [default: request_path]
     -w <var>, --having <expr>  having clause [default: 1]
@@ -114,7 +116,7 @@ DEFAULT_QUERIES = [
 ]
 
 DEFAULT_FIELDS = set(['status_type', 'bytes_sent'])
-
+LOGGING_SAMPLES = None
 
 # ======================
 # generator utilities
@@ -331,17 +333,29 @@ def setup_reporter(processor, arguments):
     if arguments['--no-follow']:
         return
 
-    scr = curses.initscr()
-    atexit.register(curses.endwin)
+    global LOGGING_SAMPLES
+    if LOGGING_SAMPLES is None:
+        scr = curses.initscr()
+        atexit.register(curses.endwin)
 
     def print_report(sig, frame):
+        global LOGGING_SAMPLES
+
         output = processor.report()
-        scr.erase()
-        try:
-            scr.addstr(output)
-        except curses.error:
-            pass
-        scr.refresh()
+        if LOGGING_SAMPLES is None:
+            scr.erase()
+
+            try:
+                scr.addstr(output)
+            except curses.error:
+                pass
+
+            scr.refresh()
+        else:
+            print(output)
+            LOGGING_SAMPLES -= 1
+            if LOGGING_SAMPLES == 0:
+                sys.exit(0)
 
     signal.signal(signal.SIGALRM, print_report)
     interval = float(arguments['--interval'])
@@ -351,6 +365,7 @@ def setup_reporter(processor, arguments):
 def process(arguments):
     access_log = arguments['--access-log']
     log_format = arguments['--log-format']
+    rtmp_stat_url = arguments['--rtmp-stat-url']
     if access_log is None and not sys.stdin.isatty():
         # assume logs can be fetched directly from stdin when piped
         access_log = 'stdin'
@@ -364,11 +379,13 @@ def process(arguments):
 
     if arguments['info']:
         print('nginx configuration file:\n ', detect_config_path())
+        print('nginx rtmp stat url:\n ', rtmp_stat_url)
         print('access log file:\n ', access_log)
         print('access log format:\n ', log_format)
         print('available variables:\n ', ', '.join(sorted(extract_variables(log_format))))
         return
 
+    #get_rtmp_top(rtmp_stat_url).print_info()
     source = build_source(access_log, arguments)
     pattern = build_pattern(log_format)
     processor = build_processor(arguments)
@@ -386,6 +403,11 @@ def main():
         log_level = logging.DEBUG
     logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
     logging.debug('arguments:\n%s', args)
+
+    global LOGGING_SAMPLES
+    LOGGING_SAMPLES = args['--samples']
+    if LOGGING_SAMPLES is not None:
+        LOGGING_SAMPLES = int(LOGGING_SAMPLES)
 
     try:
         process(args)
