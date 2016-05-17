@@ -17,12 +17,48 @@ else:
 
 REGEX_SPECIAL_CHARS = r'([\.\*\+\?\|\(\)\{\}\[\]])'
 REGEX_LOG_FORMAT_VARIABLE = r'\$([a-zA-Z0-9\_]+)'
+
+"""
+1. COMBINED
+
+192.168.1.10 - - [27/Apr/2016:07:04:48 +0000] "GET /jwplayer/jwplayer.js HTTP/1.1" 200 227036
+"http://192.168.1.12:8080/index.html"
+"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_11_4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/49.0.2623.110 Safari/537.36"
+
+$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent
+"$http_referer"
+"$http_user_agent"
+
+2. COMMON
+
+$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent "$http_x_forwarded_for"
+
+3. HLS_OUT
+
+192.168.1.10 - - [16/May/2016:10:38:08 +0000] "GET /live/801-261550546.m3u8 HTTP/1.1" 206 147
+"http://192.168.1.12:8080/?cname=801&user1=261550546"
+"Mozilla/5.0 (Linux; Android 4.4.2; GT-I9500 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/37.0.0.0 Mobile MQQBrowser/6.2 TBS/036215 Safari/537.36 V1_AND_SQ_6.3.3_358_YYB_D QQ/6.3.3.2755 NetType/WIFI WebP/0.3.0 Pixel/1080"
+
+$remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent
+"$http_referer"
+"$http_user_agent"
+
+4. HLS_IN
+
+127.0.0.1 [16/May/2016:10:40:17 +0000] PUBLISH "live" "801-261550546" "" - 100322213 1049 "" "WIN 15,0,0,239" (25m 54s)
+
+"""
+
 LOG_FORMAT_COMBINED = '$remote_addr - $remote_user [$time_local] ' \
                       '"$request" $status $body_bytes_sent ' \
                       '"$http_referer" "$http_user_agent"'
 LOG_FORMAT_COMMON   = '$remote_addr - $remote_user [$time_local] ' \
                       '"$request" $status $body_bytes_sent ' \
                       '"$http_x_forwarded_for"'
+LOG_FORMAT_HLS_OUT  = '$remote_addr - $remote_user [$time_local] ' \
+                      '"$request" $status $body_bytes_sent ' \
+                      '"$http_referer" "$http_user_agent"'
+LOG_FORMAT_HLS_IN   = ''
 
 # common parser element
 semicolon = Literal(';').suppress()
@@ -94,6 +130,7 @@ def get_log_formats(config):
 def detect_log_config(arguments):
     """
     Detect access log config (path and format) of nginx. Offer user to select if multiple access logs are detected.
+    :param arguments: arguments from user input
     :return: path and format of detected / selected access log
     """
     config = arguments['--config']
