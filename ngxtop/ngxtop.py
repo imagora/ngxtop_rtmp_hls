@@ -74,8 +74,14 @@ except ImportError:
 from docopt import docopt
 import tabulate
 
-from .config_parser import detect_log_config, detect_config_path, extract_variables, build_pattern
-from .utils import error_exit
+if __name__ == '__main__' and __package__ is None:
+    from config_parser import detect_log_config, detect_config_path, extract_variables, build_pattern
+    from utils import error_exit
+    from rtmptop import get_rtmp_top
+else:
+    from .config_parser import detect_log_config, detect_config_path, extract_variables, build_pattern
+    from .utils import error_exit
+    from .rtmptop import get_rtmp_top
 
 
 DEFAULT_QUERIES = [
