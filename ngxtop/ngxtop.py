@@ -86,17 +86,26 @@ else:
     from .rtmptop import get_rtmp_top
 
 """
-RTMP&HLS HLS
+* RTMP&HLS HLS
 
 Summary:
     Clients: - OutMBytes: - OutKBytes/s - Time -
 Detail:
-    Stream: - OutMBytes: - OutKBytes/s - Time -
+    HLS Stream: - OutMBytes: - OutKBytes/s - Time -
         Client: - URL: - Info: - Time -
         Client: - URL: - Info: - Time -
         Client: - URL: - Info: - Time -
 
-RTMP
+    RTMP Stream: -
+    Stream -: time -, bw_in -, bytes_in -, bw_out -, bytes_out -, bw_audio -, bs_video -, clients -
+    Meta info:
+        Video Meta: width -, height -, frame_rate -, codec -, profile -, compat -, level -
+        Audio Meta: codec -, profile -, channels -, sample rate -
+    Client Info:
+        Server: addr -, flashver -
+        Client: addr -, flashver -, page -, swf -
+
+* RTMP
 
 Summary:
     Nginx version: -, RTMP version: -, Compiler: -, Built: -, PID: -, Uptime: -.
@@ -364,10 +373,16 @@ def setup_reporter(processor, arguments):
         scr = curses.initscr()
         atexit.register(curses.endwin)
 
+    rtmp_stat_url = arguments['--rtmp-stat-url']
+
     def print_report(sig, frame):
         global LOGGING_SAMPLES
 
         output = processor.report()
+        if rtmp_stat_url is not None:
+            rtmp_info = get_rtmp_top(rtmp_stat_url)
+            output = output + '\n\n' + '\n'.join(rtmp_info.print_info())
+
         if LOGGING_SAMPLES is None:
             scr.erase()
 

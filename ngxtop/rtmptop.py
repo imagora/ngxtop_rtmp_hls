@@ -6,6 +6,7 @@ Need to install nginx-rtmp-module first.
 import xml.dom.minidom
 import urllib2
 
+
 STAT_URL = "http://127.0.0.1:8080/stat"
 
 
