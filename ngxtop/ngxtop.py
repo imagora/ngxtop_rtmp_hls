@@ -85,7 +85,32 @@ else:
     from .utils import error_exit
     from .rtmptop import get_rtmp_top
 
+"""
+RTMP&HLS HLS
 
+Summary:
+    Clients: - OutMBytes: - OutKBytes/s - Time -
+Detail:
+    Stream: - OutMBytes: - OutKBytes/s - Time -
+        Client: - URL: - Info: - Time -
+        Client: - URL: - Info: - Time -
+        Client: - URL: - Info: - Time -
+
+RTMP
+
+Summary:
+    Nginx version: -, RTMP version: -, Compiler: -, Built: -, PID: -, Uptime: -.
+    Accepted: -, bw_in: -Kbit/s, bytes_in: -MByte, bw_out: -Kbit/s, bytes_out: -MByte
+Detail:
+    Streams: -
+    Stream -: time -, bw_in -, bytes_in -, bw_out -, bytes_out -, bw_audio -, bs_video -, clients -
+    Meta info:
+        Video Meta: width -, height -, frame_rate -, codec -, profile -, compat -, level -
+        Audio Meta: codec -, profile -, channels -, sample rate -
+    Client Info:
+        Server: addr -, flashver -
+        Client: addr -, flashver -, page -, swf -
+"""
 DEFAULT_QUERIES = [
     ('Summary:',
      '''SELECT
@@ -117,6 +142,7 @@ DEFAULT_QUERIES = [
 
 DEFAULT_FIELDS = set(['status_type', 'bytes_sent'])
 LOGGING_SAMPLES = None
+
 
 # ======================
 # generator utilities
@@ -254,7 +280,7 @@ class SQLProcessor(object):
 
     def count(self):
         with closing(self.conn.cursor()) as cursor:
-            cursor.execute('select count(1) from log')
+            cursor.execute('SELECT count(1) FROM log')
             return cursor.fetchone()[0]
 
 
@@ -385,7 +411,6 @@ def process(arguments):
         print('available variables:\n ', ', '.join(sorted(extract_variables(log_format))))
         return
 
-    #get_rtmp_top(rtmp_stat_url).print_info()
     source = build_source(access_log, arguments)
     pattern = build_pattern(log_format)
     processor = build_processor(arguments)

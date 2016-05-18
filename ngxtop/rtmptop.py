@@ -6,7 +6,6 @@ Need to install nginx-rtmp-module first.
 import xml.dom.minidom
 import urllib2
 
-
 STAT_URL = "http://127.0.0.1:8080/stat"
 
 
@@ -49,12 +48,12 @@ class MetaInfo:
         self.audio_channels = int(pass_for_node_value(audio_child, 'channels'))
         self.audio_sample_rate = int(pass_for_node_value(audio_child, 'sample_rate'))
 
-    def print_info(self):
-        print '\tVideo Meta: width %d, height %d, frame_rate %d, codec %s, profile %s, compat %d, level %f' % \
-              (self.video_width, self.video_height, self.video_frame_rate, self.video_codec, self.video_profile,
-               self.video_compat, self.video_level)
-        print '\tAudio Meta: codec %s, profile %s, channels %d, sample rate %d' % \
-              (self.audio_codec, self.audio_profile, self.audio_channels, self.audio_sample_rate)
+    def print_info(self, output):
+        output.append('\t\tVideo Meta: width %d, height %d, frame_rate %d, codec %s, profile %s, compat %d, level %f' %
+                      (self.video_width, self.video_height, self.video_frame_rate, self.video_codec, self.video_profile,
+                       self.video_compat, self.video_level))
+        output.append('\t\tAudio Meta: codec %s, profile %s, channels %d, sample rate %d' %
+                      (self.audio_codec, self.audio_profile, self.audio_channels, self.audio_sample_rate))
 
 
 class ClientInfo:
@@ -82,12 +81,12 @@ class ClientInfo:
             self.pageurl = pass_for_node_value(client_root, 'pageurl')
             self.swfurl = pass_for_node_value(client_root, 'swfurl')
 
-    def print_info(self):
+    def print_info(self, output):
         if self.is_publisher:
-            print '\tServer: addr %s, flashver %s' % (self.address, self.flashver)
+            output.append('\t\tServer: addr %s, flashver %s' % (self.address, self.flashver))
         else:
-            print '\tClient: addr %s, flashver %s, page %s, swf %s' % \
-                  (self.address, self.flashver, self.pageurl, self.swfurl)
+            output.append('\t\tClient: addr %s, flashver %s, page %s, swf %s' %
+                          (self.address, self.flashver, self.pageurl, self.swfurl))
 
 
 class StreamInfo:
@@ -117,23 +116,21 @@ class StreamInfo:
             client_info.pass_info(client)
             self.clients[client_info.id] = client_info
 
-    def print_info(self):
-        print 'Stream %s: time %d, bw_in %d, bytes_in %f, bw_out %d, ' \
-              'bytes_out %f, bw_audio %d, bs_video %d, clients %d' % \
-              (self.name, self.time, self.bw_in, self.bytes_in, self.bw_out,
-               self.bytes_out, self.bw_audio, self.bw_video, self.nclients)
+    def print_info(self, output):
+        output.append('\tStream %s: time %d, bw_in %d, bytes_in %f, bw_out %d, '
+                      'bytes_out %f, bw_audio %d, bs_video %d, clients %d' %
+                      (self.name, self.time, self.bw_in, self.bytes_in, self.bw_out,
+                       self.bytes_out, self.bw_audio, self.bw_video, self.nclients))
 
-        print 'Meta info:'
+        output.append('\tMeta info:')
         if self.meta_info:
-            self.meta_info.print_info()
+            self.meta_info.print_info(output)
         else:
-            print '\tStream Idel'
+            output.append('\t\tStream Idel')
 
-        print 'Client Info:'
+        output.append('\t\tClient Info:')
         for client in self.clients.itervalues():
-            client.print_info()
-
-        print '\n'
+            client.print_info(output)
 
 
 class NginxRtmpInfo:
@@ -153,22 +150,29 @@ class NginxRtmpInfo:
         self.stream_infos = {}
 
     def pass_info(self, root):
-        live_child = root.getElementsByTagName('server')[0].getElementsByTagName('application')[0].getElementsByTagName('live')[0]
+        live_child = root.getElementsByTagName('server')[0].getElementsByTagName(
+            'application')[0].getElementsByTagName('live')[0]
         for stream_child in live_child.getElementsByTagName('stream'):
             stream_info = StreamInfo(stream_child)
             stream_info.pass_info(stream_child)
             self.stream_infos[stream_info.name] = stream_info
 
     def print_info(self):
-        print 'Streams: %d\n' % len(self.stream_infos)
-        for stream in self.stream_infos.itervalues():
-            stream.print_info()
+        output = list()
+        output.append('Summary:')
+        output.append('\tNginx version: %s, RTMP version: %s, Compiler: %s, Built: %s, PID: %d, Uptime: %ds.' %
+                      (self.nginx_version, self.rtmp_version, self.compiler, self.built, self.pid, self.uptime))
+        output.append('\tAccepted: %d, bw_in: %f Kbit/s, bytes_in: %02f MByte, '
+                      'bw_out: %02f Kbit/s, bytes_out: %02f MByte' %
+                      (self.accepted, self.bw_in / 1024.0, self.bytes_in / 1024.0 / 1024,
+                       self.bw_out / 1024.0, self.bytes_out / 1024.0 / 1024))
 
-        print 'Nginx version: %s, RTMP version: %s, Compiler: %s, Built: %s, PID: %d, Uptime: %ds.' % \
-              (self.nginx_version, self.rtmp_version, self.compiler, self.built, self.pid, self.uptime)
-        print 'Accepted: %d, bw_in: %f Kbit/s, bytes_in: %02f MByte, bw_out: %02f Kbit/s, bytes_out: %02f MByte' % \
-              (self.accepted, self.bw_in / 1024.0, self.bytes_in / 1024.0 / 1024,
-               self.bw_out / 1024.0, self.bytes_out / 1024.0 / 1024)
+        output.append('Detail:')
+        output.append('\tStreams: %d' % len(self.stream_infos))
+        for stream in self.stream_infos.itervalues():
+            stream.print_info(output)
+
+        return output
 
 
 def get_rtmp_top(stat_url):
