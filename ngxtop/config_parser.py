@@ -45,10 +45,13 @@ $remote_addr - $remote_user [$time_local] "$request" $status $body_bytes_sent
 
 4. HLS_IN
 
-127.0.0.1 [16/May/2016:10:40:17 +0000] PUBLISH "live" "801-261550546" "" - 100322213 1049 "" "WIN 15,0,0,239" (25m 54s)
+127.0.0.1 [16/May/2016:10:40:17 +0000] PUBLISH "live" "801-261550546" "" -
+100322213 1049 "" "WIN 15,0,0,239" (25m 54s)
+
+$remote_addr [$time_local] $status "$request" "$http_referer" "" -
+$bytes_sent $connection_requests "" "$http_user_agent" ($request_time)
 
 """
-
 LOG_FORMAT_COMBINED = '$remote_addr - $remote_user [$time_local] ' \
                       '"$request" $status $body_bytes_sent ' \
                       '"$http_referer" "$http_user_agent"'
@@ -58,6 +61,7 @@ LOG_FORMAT_COMMON   = '$remote_addr - $remote_user [$time_local] ' \
 LOG_FORMAT_HLS_OUT  = '$remote_addr - $remote_user [$time_local] ' \
                       '"$request" $status $body_bytes_sent ' \
                       '"$http_referer" "$http_user_agent"'
+#TODO: Not sure about the hls_in format
 LOG_FORMAT_HLS_IN   = ''
 
 # common parser element
@@ -94,6 +98,7 @@ def detect_config_path():
 def get_access_logs(config):
     """
     Parse config for access_log directives
+    :param config: nginx config file
     :return: iterator over ('path', 'format name') tuple of found directives
     """
     access_log = Literal("access_log") + ZeroOrMore(parameter) + semicolon
@@ -115,6 +120,7 @@ def get_access_logs(config):
 def get_log_formats(config):
     """
     Parse config for log_format directives
+    :param config: nginx config file
     :return: iterator over ('format name', 'format string') tuple of found directives
     """
     # log_format name [params]
@@ -173,6 +179,10 @@ def build_pattern(log_format):
         log_format = LOG_FORMAT_COMBINED
     elif log_format == 'common':
         log_format = LOG_FORMAT_COMMON
+    elif log_format == 'hls_out':
+        log_format = LOG_FORMAT_HLS_OUT
+    elif log_format == 'hls_in':
+        log_format = LOG_FORMAT_HLS_IN
     pattern = re.sub(REGEX_SPECIAL_CHARS, r'\\\1', log_format)
     pattern = re.sub(REGEX_LOG_FORMAT_VARIABLE, '(?P<\\1>.*)', pattern)
     return re.compile(pattern)

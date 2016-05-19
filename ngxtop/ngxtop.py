@@ -59,12 +59,8 @@ Examples:
 """
 from __future__ import print_function
 import atexit
-from contextlib import closing
 import curses
 import logging
-import os
-import sqlite3
-import time
 import sys
 import signal
 
@@ -74,16 +70,17 @@ except ImportError:
     import urllib.parse as urlparse
 
 from docopt import docopt
-import tabulate
 
 if __name__ == '__main__' and __package__ is None:
-    from config_parser import detect_log_config, detect_config_path, extract_variables, build_pattern
-    from utils import error_exit
-    from rtmptop import get_rtmp_top
+    from config_parser import detect_config_path, extract_variables
+    from sql_processor import SQLProcessor
+    from rtmptop import NginxRtmpInfo
+    from httptop import NginxHttpInfo
 else:
-    from .config_parser import detect_log_config, detect_config_path, extract_variables, build_pattern
-    from .utils import error_exit
-    from .rtmptop import get_rtmp_top
+    from .config_parser import detect_config_path, extract_variables
+    from .sql_processor import SQLProcessor
+    from .rtmptop import NginxRtmpInfo
+    from .httptop import NginxHttpInfo
 
 """
 * RTMP&HLS HLS
@@ -97,7 +94,7 @@ Detail:
         Client: - URL: - Info: - Time -
 
     RTMP Stream: -
-    Stream -: time -, bw_in -, bytes_in -, bw_out -, bytes_out -, bw_audio -, bs_video -, clients -
+    Stream -: time -, bw_in -, bytes_in -, bw_out -, bytes_out -, bw_audio -, bw_video -, clients -
     Meta info:
         Video Meta: width -, height -, frame_rate -, codec -, profile -, compat -, level -
         Audio Meta: codec -, profile -, channels -, sample rate -
@@ -112,7 +109,7 @@ Summary:
     Accepted: -, bw_in: -Kbit/s, bytes_in: -MByte, bw_out: -Kbit/s, bytes_out: -MByte
 Detail:
     Streams: -
-    Stream -: time -, bw_in -, bytes_in -, bw_out -, bytes_out -, bw_audio -, bs_video -, clients -
+    Stream -: time -, bw_in -, bytes_in -, bw_out -, bytes_out -, bw_audio -, bw_video -, clients -
     Meta info:
         Video Meta: width -, height -, frame_rate -, codec -, profile -, compat -, level -
         Audio Meta: codec -, profile -, channels -, sample rate -
@@ -131,7 +128,8 @@ DEFAULT_QUERIES = [
        count(CASE WHEN status_type = 5 THEN 1 END) AS '5xx'
      FROM log
      ORDER BY %(--order-by)s DESC
-     LIMIT %(--limit)s'''),
+     LIMIT %(--limit)s
+     '''),
 
     ('Detailed:',
      '''SELECT
@@ -148,289 +146,110 @@ DEFAULT_QUERIES = [
      ORDER BY %(--order-by)s DESC
      LIMIT %(--limit)s''')
 ]
-
 DEFAULT_FIELDS = set(['status_type', 'bytes_sent'])
 LOGGING_SAMPLES = None
 
 
-# ======================
-# generator utilities
-# ======================
-def follow(the_file):
-    """
-    Follow a given file and yield new lines when they are available, like `tail -f`.
-    """
-    with open(the_file) as f:
-        f.seek(0, 2)  # seek to eof
-        while True:
-            line = f.readline()
-            if not line:
-                time.sleep(0.1)  # sleep briefly before trying again
-                continue
-            yield line
-
-
-def map_field(field, func, dict_sequence):
-    """
-    Apply given function to value of given key in every dictionary in sequence and
-    set the result as new value for that key.
-    """
-    for item in dict_sequence:
-        try:
-            item[field] = func(item.get(field, None))
-            yield item
-        except ValueError:
-            pass
-
-
-def add_field(field, func, dict_sequence):
-    """
-    Apply given function to the record and store result in given field of current record.
-    Do nothing if record already contains given field.
-    """
-    for item in dict_sequence:
-        if field not in item:
-            item[field] = func(item)
-        yield item
-
-
-def trace(sequence, phase=''):
-    for item in sequence:
-        logging.debug('%s:\n%s', phase, item)
-        yield item
-
-
-# ======================
-# Access log parsing
-# ======================
-def parse_request_path(record):
-    if 'request_uri' in record:
-        uri = record['request_uri']
-    elif 'request' in record:
-        uri = ' '.join(record['request'].split(' ')[1:-1])
-    else:
-        uri = None
-    return urlparse.urlparse(uri).path if uri else None
-
-
-def parse_status_type(record):
-    return record['status'] // 100 if 'status' in record else None
-
-
-def to_int(value):
-    return int(value) if value and value != '-' else 0
-
-
-def to_float(value):
-    return float(value) if value and value != '-' else 0.0
-
-
-def parse_log(lines, pattern):
-    matches = (pattern.match(l) for l in lines)
-    records = (m.groupdict() for m in matches if m is not None)
-    records = map_field('status', to_int, records)
-    records = add_field('status_type', parse_status_type, records)
-    records = add_field('bytes_sent', lambda r: r['body_bytes_sent'], records)
-    records = map_field('bytes_sent', to_int, records)
-    records = map_field('request_time', to_float, records)
-    records = add_field('request_path', parse_request_path, records)
-    return records
-
-
-# =================================
-# Records and statistic processor
-# =================================
-class SQLProcessor(object):
-    def __init__(self, report_queries, fields, index_fields=None):
-        self.begin = False
-        self.report_queries = report_queries
-        self.index_fields = index_fields if index_fields is not None else []
-        self.column_list = ','.join(fields)
-        self.holder_list = ','.join(':%s' % var for var in fields)
-        self.conn = sqlite3.connect(':memory:')
-        self.init_db()
-
-    def process(self, records):
-        self.begin = time.time()
-        insert = 'insert into log (%s) values (%s)' % (self.column_list, self.holder_list)
-        logging.info('sqlite insert: %s', insert)
-        with closing(self.conn.cursor()) as cursor:
-            for r in records:
-                cursor.execute(insert, r)
-
-    def report(self):
-        if not self.begin:
-            return ''
-        count = self.count()
-        duration = time.time() - self.begin
-        status = 'running for %.0f seconds, %d records processed: %.2f req/sec'
-        output = [status % (duration, count, count / duration)]
-        with closing(self.conn.cursor()) as cursor:
-            for query in self.report_queries:
-                if isinstance(query, tuple):
-                    label, query = query
-                else:
-                    label = ''
-                cursor.execute(query)
-                columns = (d[0] for d in cursor.description)
-                result = tabulate.tabulate(cursor.fetchall(), headers=columns, tablefmt='orgtbl', floatfmt='.3f')
-                output.append('%s\n%s' % (label, result))
-        return '\n\n'.join(output)
-
-    def init_db(self):
-        create_table = 'create table log (%s)' % self.column_list
-        with closing(self.conn.cursor()) as cursor:
-            logging.info('sqlite init: %s', create_table)
-            cursor.execute(create_table)
-            for idx, field in enumerate(self.index_fields):
-                sql = 'create index log_idx%d on log (%s)' % (idx, field)
-                logging.info('sqlite init: %s', sql)
-                cursor.execute(sql)
-
-    def count(self):
-        with closing(self.conn.cursor()) as cursor:
-            cursor.execute('SELECT count(1) FROM log')
-            return cursor.fetchone()[0]
-
-
-# ===============
-# Log processing
-# ===============
-def process_log(lines, pattern, processor, arguments):
-    pre_filer_exp = arguments['--pre-filter']
-    if pre_filer_exp:
-        lines = (line for line in lines if eval(pre_filer_exp, {}, dict(line=line)))
-
-    records = parse_log(lines, pattern)
-
-    filter_exp = arguments['--filter']
-    if filter_exp:
-        records = (r for r in records if eval(filter_exp, {}, r))
-
-    processor.process(records)
-    print(processor.report())  # this will only run when start in --no-follow mode
-
-
-def build_processor(arguments):
-    fields = arguments['<var>']
-    if arguments['print']:
-        label = ', '.join(fields) + ':'
-        selections = ', '.join(fields)
-        query = 'select %s from log group by %s' % (selections, selections)
-        report_queries = [(label, query)]
-    elif arguments['top']:
-        limit = int(arguments['--limit'])
-        report_queries = []
-        for var in fields:
-            label = 'top %s' % var
-            query = 'select %s, count(1) as count from log group by %s order by count desc limit %d' % (var, var, limit)
-            report_queries.append((label, query))
-    elif arguments['avg']:
-        label = 'average %s' % fields
-        selections = ', '.join('avg(%s)' % var for var in fields)
-        query = 'select %s from log' % selections
-        report_queries = [(label, query)]
-    elif arguments['sum']:
-        label = 'sum %s' % fields
-        selections = ', '.join('sum(%s)' % var for var in fields)
-        query = 'select %s from log' % selections
-        report_queries = [(label, query)]
-    elif arguments['query']:
-        report_queries = arguments['<query>']
-        fields = arguments['<fields>']
-    else:
-        report_queries = [(name, query % arguments) for name, query in DEFAULT_QUERIES]
-        fields = DEFAULT_FIELDS.union(set([arguments['--group-by']]))
-
-    for label, query in report_queries:
-        logging.info('query for "%s":\n %s', label, query)
-
-    processor_fields = []
-    for field in fields:
-        processor_fields.extend(field.split(','))
-
-    processor = SQLProcessor(report_queries, processor_fields)
-    return processor
-
-
-def build_source(access_log, arguments):
-    # constructing log source
-    if access_log == 'stdin':
-        lines = sys.stdin
-    elif arguments['--no-follow']:
-        lines = open(access_log)
-    else:
-        lines = follow(access_log)
-    return lines
-
-
-def setup_reporter(processor, arguments):
-    if arguments['--no-follow']:
-        return
-
-    global LOGGING_SAMPLES
-    if LOGGING_SAMPLES is None:
-        scr = curses.initscr()
+class NginxTop(object):
+    def __init__(self, arguments):
+        self.sql_processor = None
+        self.arguments = arguments
+        self.http_top = NginxHttpInfo(arguments)
+        self.rtmp_top = NginxRtmpInfo(arguments)
+        self.rtmp_stat_url = arguments['--rtmp-stat-url']
+        self.logging_samples = arguments['--samples']
+        if self.logging_samples is not None:
+            self.logging_samples = int(self.logging_samples)
+        self.scr = curses.initscr()
         atexit.register(curses.endwin)
 
-    rtmp_stat_url = arguments['--rtmp-stat-url']
+    def build_processor(self):
+        if self.sql_processor is not None:
+            return
 
-    def print_report(sig, frame):
-        global LOGGING_SAMPLES
+        fields = self.arguments['<var>']
+        if self.arguments['print']:
+            label = ', '.join(fields) + ':'
+            selections = ', '.join(fields)
+            query = 'select %s from log group by %s' % (selections, selections)
+            report_queries = [(label, query)]
+        elif self.arguments['top']:
+            limit = int(self.arguments['--limit'])
+            report_queries = []
+            for var in fields:
+                label = 'top %s' % var
+                query = 'select %s, count(1) as count from log group by %s order by count desc limit %d' % (var, var, limit)
+                report_queries.append((label, query))
+        elif self.arguments['avg']:
+            label = 'average %s' % fields
+            selections = ', '.join('avg(%s)' % var for var in fields)
+            query = 'select %s from log' % selections
+            report_queries = [(label, query)]
+        elif self.arguments['sum']:
+            label = 'sum %s' % fields
+            selections = ', '.join('sum(%s)' % var for var in fields)
+            query = 'select %s from log' % selections
+            report_queries = [(label, query)]
+        elif self.arguments['query']:
+            report_queries = self.arguments['<query>']
+            fields = self.arguments['<fields>']
+        else:
+            report_queries = [(name, query % self.arguments) for name, query in DEFAULT_QUERIES]
+            fields = DEFAULT_FIELDS.union(set([self.arguments['--group-by']]))
 
-        output = processor.report()
-        if rtmp_stat_url is not None:
-            rtmp_info = get_rtmp_top(rtmp_stat_url)
-            output = output + '\n\n' + '\n'.join(rtmp_info.print_info())
+        for label, query in report_queries:
+            logging.info('query for "%s":\n %s', label, query)
 
-        if LOGGING_SAMPLES is None:
-            scr.erase()
+        processor_fields = []
+        for field in fields:
+            processor_fields.extend(field.split(','))
+
+        self.sql_processor = SQLProcessor(report_queries, processor_fields)
+        self.http_top.set_processor(self.sql_processor)
+        self.rtmp_top.set_processor(self.sql_processor)
+
+    def print_report(self, sig, frame):
+        output = self.sql_processor.report()
+        if self.rtmp_stat_url is not None:
+            self.rtmp_top.parse_info()
+            output = output + '\n\n' + '\n'.join(self.rtmp_top.print_info())
+
+        if self.logging_samples is None:
+            self.scr.erase()
 
             try:
-                scr.addstr(output)
+                self.scr.addstr(output)
             except curses.error:
                 pass
 
-            scr.refresh()
+            self.scr.refresh()
         else:
             print(output)
-            LOGGING_SAMPLES -= 1
-            if LOGGING_SAMPLES == 0:
+            self.logging_samples -= 1
+            if self.logging_samples == 0:
                 sys.exit(0)
 
-    signal.signal(signal.SIGALRM, print_report)
-    interval = float(arguments['--interval'])
-    signal.setitimer(signal.ITIMER_REAL, 0.1, interval)
+    def setup_reporter(self):
+        if self.arguments['--no-follow']:
+            return
 
+        signal.signal(signal.SIGALRM, self.print_report)
+        interval = float(self.arguments['--interval'])
+        signal.setitimer(signal.ITIMER_REAL, 0.1, interval)
 
-def process(arguments):
-    access_log = arguments['--access-log']
-    log_format = arguments['--log-format']
-    rtmp_stat_url = arguments['--rtmp-stat-url']
-    if access_log is None and not sys.stdin.isatty():
-        # assume logs can be fetched directly from stdin when piped
-        access_log = 'stdin'
-    if access_log is None:
-        access_log, log_format = detect_log_config(arguments)
+    def run(self):
+        access_log, log_format = self.http_top.get_access_log()
+        if self.arguments['info']:
+            print('nginx configuration file:\n ', detect_config_path())
+            print('nginx rtmp stat url:\n ', self.rtmp_top.get_rtmp_url())
+            print('access log file:\n ', access_log)
+            print('access log format:\n ', log_format)
+            print('available variables:\n ', ', '.join(sorted(extract_variables(log_format))))
+            return
 
-    logging.info('access_log: %s', access_log)
-    logging.info('log_format: %s', log_format)
-    if access_log != 'stdin' and not os.path.exists(access_log):
-        error_exit('access log file "%s" does not exist' % access_log)
-
-    if arguments['info']:
-        print('nginx configuration file:\n ', detect_config_path())
-        print('nginx rtmp stat url:\n ', rtmp_stat_url)
-        print('access log file:\n ', access_log)
-        print('access log format:\n ', log_format)
-        print('available variables:\n ', ', '.join(sorted(extract_variables(log_format))))
-        return
-
-    source = build_source(access_log, arguments)
-    pattern = build_pattern(log_format)
-    processor = build_processor(arguments)
-    setup_reporter(processor, arguments)
-    process_log(source, pattern, processor, arguments)
+        self.build_processor()
+        self.setup_reporter()
+        self.http_top.parse_info()
 
 
 def main():
@@ -444,13 +263,8 @@ def main():
     logging.basicConfig(level=log_level, format='%(levelname)s: %(message)s')
     logging.debug('arguments:\n%s', args)
 
-    global LOGGING_SAMPLES
-    LOGGING_SAMPLES = args['--samples']
-    if LOGGING_SAMPLES is not None:
-        LOGGING_SAMPLES = int(LOGGING_SAMPLES)
-
     try:
-        process(args)
+        NginxTop(args).run()
     except KeyboardInterrupt:
         sys.exit(0)
 

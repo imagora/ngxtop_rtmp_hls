@@ -6,6 +6,11 @@ Need to install nginx-rtmp-module first.
 import xml.dom.minidom
 import urllib2
 
+if __package__ is None:
+    from utils import error_exit
+else:
+    from .utils import error_exit
+
 
 STAT_URL = "http://127.0.0.1:8080/stat"
 
@@ -19,7 +24,7 @@ def pass_for_node_value(root, node_name):
     return 0
 
 
-class MetaInfo:
+class MetaInfo(object):
     def __init__(self):
         self.video_width = None
         self.video_height = None
@@ -33,7 +38,7 @@ class MetaInfo:
         self.audio_channels = None
         self.audio_sample_rate = None
 
-    def pass_info(self, meta_root):
+    def parse_info(self, meta_root):
         video_child = meta_root.getElementsByTagName('video')[0]
         self.video_width = int(pass_for_node_value(video_child, 'width'))
         self.video_height = int(pass_for_node_value(video_child, 'height'))
@@ -57,7 +62,7 @@ class MetaInfo:
                       (self.audio_codec, self.audio_profile, self.audio_channels, self.audio_sample_rate))
 
 
-class ClientInfo:
+class ClientInfo(object):
     def __init__(self, client_root):
         self.id = int(pass_for_node_value(client_root, 'id'))
         self.address = pass_for_node_value(client_root, 'address')
@@ -73,7 +78,7 @@ class ClientInfo:
 
         self.is_publisher = False
 
-    def pass_info(self, client_root):
+    def parse_info(self, client_root):
         publish_child = client_root.getElementsByTagName('publishing')
         if publish_child.length > 0:
             self.is_publisher = True
@@ -90,7 +95,7 @@ class ClientInfo:
                           (self.address, self.flashver, self.pageurl, self.swfurl))
 
 
-class StreamInfo:
+class StreamInfo(object):
     def __init__(self, stream_root):
         self.name = pass_for_node_value(stream_root, 'name')
         self.time = int(pass_for_node_value(stream_root, 'time'))
@@ -105,16 +110,16 @@ class StreamInfo:
         self.meta_info = None
         self.clients = {}
 
-    def pass_info(self, stream_root):
+    def parse_info(self, stream_root):
         meta_child = stream_root.getElementsByTagName('meta')
         if meta_child.length > 0:
             self.meta_info = MetaInfo()
-            self.meta_info.pass_info(meta_child[0])
+            self.meta_info.parse_info(meta_child[0])
 
         client_child = stream_root.getElementsByTagName('client')
         for client in client_child:
             client_info = ClientInfo(client)
-            client_info.pass_info(client)
+            client_info.parse_info(client)
             self.clients[client_info.id] = client_info
 
     def print_info(self, output):
@@ -134,8 +139,45 @@ class StreamInfo:
             client.print_info(output)
 
 
-class NginxRtmpInfo:
-    def __init__(self, root):
+class NginxRtmpInfo(object):
+    def __init__(self, arguments):
+        self.arguments = arguments
+        self.sql_processor = None
+
+        self.rtmp_url = STAT_URL
+        self.nginx_version = None
+        self.rtmp_version = None
+        self.compiler = None
+        self.built = None
+        self.pid = None
+        self.uptime = None
+        self.accepted = None
+        self.bw_in = None
+        self.bw_out = None
+        self.bytes_in = None
+        self.bytes_out = None
+
+        self.stream_infos = {}
+
+    def set_processor(self, processor):
+        self.sql_processor = processor
+
+    def get_rtmp_url(self):
+        rtmp_url = self.arguments['--rtmp-stat-url']
+        if rtmp_url:
+            self.rtmp_url = rtmp_url
+        return self.rtmp_url
+
+    def parse_info(self):
+        self.get_rtmp_url()
+        try:
+            response = urllib2.urlopen(self.rtmp_url)
+        except urllib2.URLError:
+            error_exit('Cannot access RTMP URL: %s' % self.rtmp_url)
+
+        dom = xml.dom.minidom.parseString(response.read())
+        root = dom.documentElement
+
         self.nginx_version = pass_for_node_value(root, 'nginx_version')
         self.rtmp_version = pass_for_node_value(root, 'nginx_rtmp_version')
         self.compiler = pass_for_node_value(root, 'compiler')
@@ -148,14 +190,11 @@ class NginxRtmpInfo:
         self.bytes_in = int(pass_for_node_value(root, 'bytes_in'))
         self.bytes_out = int(pass_for_node_value(root, 'bytes_out'))
 
-        self.stream_infos = {}
-
-    def pass_info(self, root):
         live_child = root.getElementsByTagName('server')[0].getElementsByTagName(
             'application')[0].getElementsByTagName('live')[0]
         for stream_child in live_child.getElementsByTagName('stream'):
             stream_info = StreamInfo(stream_child)
-            stream_info.pass_info(stream_child)
+            stream_info.parse_info(stream_child)
             self.stream_infos[stream_info.name] = stream_info
 
     def print_info(self):
@@ -174,18 +213,3 @@ class NginxRtmpInfo:
             stream.print_info(output)
 
         return output
-
-
-def get_rtmp_top(stat_url):
-    url = STAT_URL
-    if stat_url != '':
-        url = stat_url
-
-    response = urllib2.urlopen(url)
-    dom = xml.dom.minidom.parseString(response.read())
-    root = dom.documentElement
-
-    rtmp_info = NginxRtmpInfo(root)
-    rtmp_info.pass_info(root)
-
-    return rtmp_info

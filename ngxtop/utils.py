@@ -1,4 +1,5 @@
 import sys
+import logging
 
 
 def choose_one(choices, prompt):
@@ -16,6 +17,20 @@ def choose_one(choices, prompt):
     return choices[selected - 1]
 
 
+def trace(sequence, phase=''):
+    for item in sequence:
+        logging.debug('%s:\n%s', phase, item)
+        yield item
+
+
 def error_exit(msg, status=1):
     sys.stderr.write('Error: %s\n' % msg)
     sys.exit(status)
+
+
+def to_int(value):
+    return int(value) if value and value != '-' else 0
+
+
+def to_float(value):
+    return float(value) if value and value != '-' else 0.0
