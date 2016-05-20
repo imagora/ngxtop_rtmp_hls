@@ -128,7 +128,7 @@ class DictProcessor(object):
             stream = 'none'
             match = None
             for pattern in self.patterns:
-                match = self.pattern.match(record['request'])
+                match = pattern.match(record['request'])
                 if match is not None:
                     break
 
