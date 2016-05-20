@@ -14,8 +14,10 @@ else:
     from .utils import to_int
     from .config_parser import REGEX_LOG_FORMAT_VARIABLE, REGEX_SPECIAL_CHARS
 
-
 REGEX_GET_STREAM = 'GET /live/$stream.m3u8 HTTP/1.1'
+TOTAL_SUMMARY_INFO = '\tClients: %d OutMBytes: %d OutKBytes/s %d Time %ds\n'
+STREAM_SUMMARY_INFO = '\tStream: %s OutMBytes: %d OutKBytes/s %d Time %ds\n'
+CLIENT_SUMMARY_INFO = '\t\tClient: %s Info: %s Time %ds\n'
 
 
 class ClientInfo(object):
@@ -23,7 +25,7 @@ class ClientInfo(object):
         self.name = name
         self.join_ts = None
         self.status = None
-        self.detail = None
+        self.detail = ''
 
     @staticmethod
     def parse_time(time_str):
@@ -31,10 +33,13 @@ class ClientInfo(object):
 
     def parse_info(self, records):
         if self.join_ts is None:
-            if 'time_local' not in records:
-                self.join_ts = calendar.timegm(datetime.utcfromtimestamp(time.time()).utctimetuple())
-            else:
+            if 'time' in records:
+                self.join_ts = calendar.timegm(datetime.utcfromtimestamp(time.time()).utctimetuple()) - \
+                               to_int(records['time']) * 1000
+            elif 'time_local' in records:
                 self.join_ts = self.parse_time(records['time_local'])
+            else:
+                self.join_ts = calendar.timegm(datetime.utcfromtimestamp(time.time()).utctimetuple())
 
         if 'status' in records:
             status = to_int(records['status'])
@@ -47,11 +52,11 @@ class ClientInfo(object):
 class StreamInfo(object):
     def __init__(self, name):
         self.name = name
-        self.in_bytes = None
-        self.in_bw = None
-        self.out_bytes = None
-        self.out_bw = None
-        self.time = None
+        self.in_bytes = 0
+        self.in_bw = 0
+        self.out_bytes = 0
+        self.out_bw = 0
+        self.start_ts = 0
 
         # request_path - ClientInfo
         self.clients = {}
@@ -61,12 +66,38 @@ class StreamInfo(object):
             return
 
         client = records['remote_addr']
+        client_info = None
         if client not in self.clients:
             client_info = ClientInfo(client)
             client_info.parse_info(records)
             self.clients[client] = client_info
         else:
-            self.clients[client].parse_info(records)
+            client_info = self.clients[client]
+            client_info.parse_info(records)
+
+        if self.start_ts == 0 or self.start_ts > client_info.join_ts:
+            self.start_ts = client_info.join_ts
+
+        duration = calendar.timegm(datetime.utcfromtimestamp(time.time()).utctimetuple()) - self.clients[client].join_ts
+
+        if 'in_bytes' in records:
+            self.in_bytes += to_int(records['in_bytes'])
+
+        if 'in_bw' in records:
+            self.in_bw = to_int(records['in_bw'])
+
+        if 'out_bytes' in records:
+            self.out_bytes += to_int(records['out_bytes'])
+        elif 'body_bytes_sent' in records:
+            self.out_bytes += to_int(records['body_bytes_sent'])
+
+        if 'out_bw' in records:
+            self.out_bw = to_int(records['out_bw'])
+        else:
+            if duration > 0:
+                self.out_bw = self.out_bytes / duration * 1000 / 1024.0
+            else:
+                self.out_bw = self.out_bytes / 1024.0
 
 
 class DictProcessor(object):
@@ -89,6 +120,8 @@ class DictProcessor(object):
         match = self.pattern.match(records['request'])
         if match is not None:
             stream = match.groupdict()['stream']
+        else:
+            stream = records['request']
 
         if stream not in self.streams:
             stream_info = StreamInfo(stream)
@@ -98,4 +131,29 @@ class DictProcessor(object):
             self.streams[stream].parse_info(records)
 
     def report(self):
-        pass
+        output = 'Summary:\n'
+
+        client_cnt = out_bytes = out_bw = run_time = 0
+        stream_output = ''
+        for stream in self.streams.itervalues():
+            client_cnt += len(stream.clients)
+            out_bytes += stream.out_bytes
+            out_bw += stream.out_bw
+            if run_time != 0:
+                run_time = min(stream.start_ts, run_time)
+            else:
+                run_time = stream.start_ts
+
+            stream_output += STREAM_SUMMARY_INFO % (
+                stream.name, stream.out_bytes / 1024.0 / 1024.0, stream.out_bw, (calendar.timegm(
+                    datetime.utcfromtimestamp(time.time()).utctimetuple()) - stream.start_ts) / 1000)
+
+            for client in stream.clients.itervalues():
+                stream_output += CLIENT_SUMMARY_INFO % (client.name, client.detail, (calendar.timegm(
+                    datetime.utcfromtimestamp(time.time()).utctimetuple()) - client.join_ts) / 1000)
+
+        run_time = (calendar.timegm(datetime.utcfromtimestamp(time.time()).utctimetuple()) - run_time) / 1000
+        output += TOTAL_SUMMARY_INFO % (client_cnt, out_bytes / 1024.0 / 1024.0, out_bw, run_time)
+        output += '\nDetail:\n'
+        output += stream_output
+        return output

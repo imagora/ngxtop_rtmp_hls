@@ -22,7 +22,7 @@ else:
 class NginxHttpInfo(object):
     def __init__(self, arguments):
         self.arguments = arguments
-        self.sql_processor = None
+        self.processor = None
         self.access_log = None
         self.pattern = None
 
@@ -71,7 +71,7 @@ class NginxHttpInfo(object):
         return record['status'] // 100 if 'status' in record else None
 
     def set_processor(self, processor):
-        self.sql_processor = processor
+        self.processor = processor
 
     def parse_log(self, lines):
         matches = (self.pattern.match(l) for l in lines)
@@ -146,8 +146,8 @@ class NginxHttpInfo(object):
         if filter_exp:
             records = (r for r in records if eval(filter_exp, {}, r))
 
-        self.sql_processor.process(records)
-        print(self.sql_processor.report())  # this will only run when start in --no-follow mode
+        self.processor.process(records)
+        print(self.processor.report())  # this will only run when start in --no-follow mode
 
     def parse_info(self):
         if self.access_log is None:

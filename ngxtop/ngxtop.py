@@ -74,11 +74,13 @@ from docopt import docopt
 if __name__ == '__main__' and __package__ is None:
     from config_parser import detect_config_path, extract_variables
     from sql_processor import SQLProcessor
+    from dict_processor import DictProcessor
     from rtmptop import NginxRtmpInfo
     from httptop import NginxHttpInfo
 else:
     from .config_parser import detect_config_path, extract_variables
     from .sql_processor import SQLProcessor
+    from .dict_processor import DictProcessor
     from .rtmptop import NginxRtmpInfo
     from .httptop import NginxHttpInfo
 
@@ -146,7 +148,7 @@ DEFAULT_QUERIES = [
      ORDER BY %(--order-by)s DESC
      LIMIT %(--limit)s''')
 ]
-DEFAULT_FIELDS = set(['status_type', 'bytes_sent'])
+DEFAULT_FIELDS = set(['stream', 'request_path', 'join_ts', 'time', 'status_type', 'detail'])
 LOGGING_SAMPLES = None
 
 
@@ -166,6 +168,11 @@ class NginxTop(object):
     def build_processor(self):
         if self.sql_processor is not None:
             return
+
+        self.sql_processor = DictProcessor()
+        self.http_top.set_processor(self.sql_processor)
+        self.rtmp_top.set_processor(self.sql_processor)
+        return
 
         fields = self.arguments['<var>']
         if self.arguments['print']:
@@ -209,10 +216,11 @@ class NginxTop(object):
         self.rtmp_top.set_processor(self.sql_processor)
 
     def print_report(self, sig, frame):
-        output = self.sql_processor.report()
         if self.rtmp_stat_url is not None:
             self.rtmp_top.parse_info()
-            output = output + '\n\n' + '\n'.join(self.rtmp_top.print_info())
+            # output = output + '\n\n' + '\n'.join(self.rtmp_top.print_info())
+
+        output = self.sql_processor.report()
 
         if self.logging_samples is None:
             self.scr.erase()

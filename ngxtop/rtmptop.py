@@ -142,7 +142,7 @@ class StreamInfo(object):
 class NginxRtmpInfo(object):
     def __init__(self, arguments):
         self.arguments = arguments
-        self.sql_processor = None
+        self.processor = None
 
         self.rtmp_url = STAT_URL
         self.nginx_version = None
@@ -160,13 +160,31 @@ class NginxRtmpInfo(object):
         self.stream_infos = {}
 
     def set_processor(self, processor):
-        self.sql_processor = processor
+        self.processor = processor
 
     def get_rtmp_url(self):
         rtmp_url = self.arguments['--rtmp-stat-url']
         if rtmp_url:
             self.rtmp_url = rtmp_url
         return self.rtmp_url
+
+    def processor_process(self):
+        if self.processor is None:
+            return
+
+        records = {}
+        for stream_info in self.stream_infos.itervalues():
+            records['request'] = stream_info.name
+            records['in_bytes'] = stream_info.bytes_in
+            records['in_bw'] = stream_info.bw_in
+            records['out_bytes'] = stream_info.bytes_out
+            records['out_bw'] = stream_info.bw_out
+
+            for client in stream_info.clients.itervalues():
+                records['remote_addr'] = client.address
+                records['time'] = client.time
+                records['http_user_agent'] = client.flashver
+                self.processor.process(records)
 
     def parse_info(self):
         self.get_rtmp_url()
@@ -196,6 +214,8 @@ class NginxRtmpInfo(object):
             stream_info = StreamInfo(stream_child)
             stream_info.parse_info(stream_child)
             self.stream_infos[stream_info.name] = stream_info
+
+        self.processor_process()
 
     def print_info(self):
         output = list()
