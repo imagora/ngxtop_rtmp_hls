@@ -88,7 +88,7 @@ class StreamInfo(object):
 
         if 'out_bytes' in records:
             self.out_bytes += to_int(records['out_bytes'])
-        elif 'body_bytes_sent' in records:
+        elif 'bytes_sent' in records:
             self.out_bytes += to_int(records['body_bytes_sent'])
 
         if 'out_bw' in records:
@@ -113,22 +113,23 @@ class DictProcessor(object):
     def process(self, records):
         self.begin = time.time()
 
-        if 'request' not in records:
-            return
+        for record in records:
+            if 'request' not in record:
+                return
 
-        stream = 'none'
-        match = self.pattern.match(records['request'])
-        if match is not None:
-            stream = match.groupdict()['stream']
-        else:
-            stream = records['request']
+            stream = 'none'
+            match = self.pattern.match(record['request'])
+            if match is not None:
+                stream = match.groupdict()['stream']
+            else:
+                stream = record['request']
 
-        if stream not in self.streams:
-            stream_info = StreamInfo(stream)
-            stream_info.parse_info(records)
-            self.streams[stream] = stream_info
-        else:
-            self.streams[stream].parse_info(records)
+            if stream not in self.streams:
+                stream_info = StreamInfo(stream)
+                stream_info.parse_info(record)
+                self.streams[stream] = stream_info
+            else:
+                self.streams[stream].parse_info(record)
 
     def report(self):
         output = 'Summary:\n'
