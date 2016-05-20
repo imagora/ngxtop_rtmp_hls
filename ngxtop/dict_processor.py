@@ -15,6 +15,7 @@ else:
     from .config_parser import REGEX_LOG_FORMAT_VARIABLE, REGEX_SPECIAL_CHARS
 
 REGEX_GET_STREAM = 'GET /live/$stream.m3u8 HTTP/1.1'
+REGEX_GET_STREAM_TS = 'GET /live/$stream-$frag.ts HTTP/1.1'
 TOTAL_SUMMARY_INFO = '\tClients: %d OutMBytes: %d OutKBytes/s %d Time %ds\n'
 STREAM_SUMMARY_INFO = '\tStream: %s OutMBytes: %d OutKBytes/s %d Time %ds\n'
 CLIENT_SUMMARY_INFO = '\t\tClient: %s Info: %s Time %ds\n'
@@ -103,9 +104,16 @@ class StreamInfo(object):
 class DictProcessor(object):
     def __init__(self):
         self.begin = False
-        self.pattern = re.sub(REGEX_SPECIAL_CHARS, r'\\\1', REGEX_GET_STREAM)
-        self.pattern = re.sub(REGEX_LOG_FORMAT_VARIABLE, '(?P<\\1>.*)', self.pattern)
-        self.pattern = re.compile(self.pattern)
+        self.patterns = []
+
+        pattern = re.sub(REGEX_SPECIAL_CHARS, r'\\\1', REGEX_GET_STREAM)
+        pattern = re.sub(REGEX_LOG_FORMAT_VARIABLE, '(?P<\\1>.*)', pattern)
+        pattern = re.compile(pattern)
+        self.patterns.append(pattern)
+        pattern = re.sub(REGEX_SPECIAL_CHARS, r'\\\1', REGEX_GET_STREAM_TS)
+        pattern = re.sub(REGEX_LOG_FORMAT_VARIABLE, '(?P<\\1>.*)', pattern)
+        pattern = re.compile(pattern)
+        self.patterns.append(pattern)
 
         # stream - StreamInfo
         self.streams = {}
@@ -118,7 +126,12 @@ class DictProcessor(object):
                 return
 
             stream = 'none'
-            match = self.pattern.match(record['request'])
+            match = None
+            for pattern in self.patterns:
+                match = self.pattern.match(record['request'])
+                if match is not None:
+                    break
+
             if match is not None:
                 stream = match.groupdict()['stream']
             else:
